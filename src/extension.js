@@ -15,45 +15,59 @@ function activate(context) {
 	const controller = vscode.tests.createTestController('nodeTapExplorer', 'Node Tap Explorer');
 	context.subscriptions.push(controller);
 
-	controller.resolveHandler = async test => {
-		try {
-			await discoverAllFilesInWorkspace(controller);
-		}
-		catch (err) {
-			console.log(err);
-		}
-	};
+	// Loading tests can take a while.
+	// Lets start looking as soon as possible.
+	discoverAllFilesInWorkspace(controller);
 
 	async function runHandler(shouldDebug, request, token) {
 		const run = controller.createTestRun(request);
-		
-		for(let test of request.include) {
-			let data = TestData.get(test);
 
-			await new Promise((resolve) => {
-				let runner = new TapRunner(data.cwd.path);
-				let parser = new TestParser(controller, run, data.cwd, ()=>{console.log('completed'); resolve();});
-				
-				runner.run(parser.getStream());
-			})
+		if(!request.include) {
+			for (let folder of vscode.workspace.workspaceFolders) {
+				await new Promise((resolve) => {
+					let runner = new TapRunner(folder.uri.path);
+					let parser = new TestParser(controller, run, folder.uri, ()=>resolve());
+					
+					runner.run(parser.getStream());
+				})
+			}
+		}
+		else {
+			for(let test of request.include) {
+				let data = TestData.get(test);
+
+				await new Promise((resolve) => {
+					let runner = new TapRunner(data.cwd.path);
+					let parser = new TestParser(controller, run, data.cwd, ()=>resolve());
+					
+					runner.run(parser.getStream());
+				})
+			}
 		}
 
 		run.end();
 	}
 
-	const runProfile = controller.createRunProfile('Run', vscode.TestRunProfileKind.Run, (request, token) => {
+	controller.createRunProfile('Run', vscode.TestRunProfileKind.Run, (request, token) => {
 		runHandler(false, request, token);
 	}, true, RunnableTag);
 
 }
 
-async function getTests(folder, controller) {
+/**
+ * This method of loading tests requires running tests.
+ * We just run tap and watch its output.
+ * @param {*} folder The current workspace folder
+ * @param {*} uri The uri of the file or folder we are running tests for.
+ * @param {*} controller The test controller.
+ */
+async function getTests(folder, uri, controller) {
 	const run = controller.createTestRun(new vscode.TestRunRequest());
 	await new Promise((resolve) => {
 		let runner = new TapRunner(folder.uri.path);
-		let parser = new TestParser(controller, run, folder.uri, ()=>resolve());
+		let parser = new TestParser(controller, run, folder.uri, ()=>resolve(), uri.path);
 		
-		runner.run(parser.getStream());
+		runner.run(parser.getStream(), uri.path);
 	});
 	run.end();
 }
@@ -64,19 +78,18 @@ async function discoverAllFilesInWorkspace(controller) {
 	}
 
 	for (let folder of vscode.workspace.workspaceFolders) {
-		const pattern = new vscode.RelativePattern(folder, '**/*.js');
+		const pattern = new vscode.RelativePattern(folder, '**/test/**/*.js');
 		const watcher = vscode.workspace.createFileSystemWatcher(pattern);
 
-		// When files are created, make sure there's a corresponding "file" node in the tree
-		watcher.onDidCreate(uri => getTests(folder, controller));
+		watcher.onDidCreate(uri => getTests(folder, uri, controller));
+
 		// When files change, re-parse them. Note that you could optimize this so
 		// that you only re-parse children that have been resolved in the past.
-		watcher.onDidChange(uri => getTests(folder, controller));
-		// And, finally, delete TestItems for removed files. This is simple, since
-		// we use the URI as the TestItem's ID.
-		watcher.onDidDelete(uri => console.log(uri));
+		watcher.onDidChange(uri => getTests(folder, uri, controller));
 
-		await getTests(folder, controller);
+		watcher.onDidDelete(uri => getTests(folder, uri, controller));
+
+		await getTests(folder, folder.uri, controller);
 	}
 }
 

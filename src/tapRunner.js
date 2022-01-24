@@ -1,5 +1,6 @@
 const { spawn } = require('child_process');
 const fs = require('fs');
+const path = require('path');
 
 class TapRunner {
     constructor(cwd) {
@@ -8,12 +9,14 @@ class TapRunner {
 
     run(stream=null, file=null) {
         return new Promise((resolve, reject) => {
+            // Use the tap reporter for input into the tap parser.
             let args = ['tap', '--reporter=tap'];
 
             if(file) {
                 try {
                     if(fs.lstatSync(file).isFile()) {
-                        args.push(file);
+                        let relPath = path.relative(this.cwd, file);
+                        args.push(relPath);
                     }
                 }
                 catch(err) {

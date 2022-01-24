@@ -7,7 +7,7 @@
     "vscode": "^1.63.0"
   },
   "categories": [
-    "Other"
+    "Testing"
   ],
   "main": "./src/extension.js",
   "activationEvents": [
